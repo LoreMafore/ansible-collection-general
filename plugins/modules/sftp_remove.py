@@ -14,7 +14,7 @@ module: sftp_remove
 
 short_description: Remove a file from an SFTP server
 
-version_added: "1.0.0"
+version_added: "2.1.0"
 
 description:
   - This module allows removing a file from an SFTP server.

@@ -5,6 +5,7 @@
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
 from __future__ import absolute_import, division, print_function
+from xml.dom.minidom import Element
 
 __metaclass__ = type
 
@@ -65,7 +66,7 @@ options:
     description:
     - The lists of paths of the files to be removed on the remote SFTP server.
     required: True
-    type: str
+    type: list
   host_key_algorithms:
     description:
     - List of allowed host key algorithms.
@@ -82,7 +83,7 @@ EXAMPLES = r"""
     host: 1.2.3.4
     username: foo
     password: bar
-    remote_path: list_of_files 
+    list_of_remote_paths: list_of_files 
     host_key_algorithms:
       - 'ssh-ed25519'
       - 'ecdsa-sha2-nistp256'
@@ -93,7 +94,7 @@ EXAMPLES = r"""
     username: foo
     private_key: '/path/to/private_key'
     private_key_passphrase: 'optional_passphrase'
-    remote_path: list_of_files
+    list_of_remote_paths: list_of_files
     host_key_algorithms:
       - 'ssh-ed25519'
       - 'ecdsa-sha2-nistp256'
@@ -103,7 +104,7 @@ EXAMPLES = r"""
     host: 1.2.3.4
     username: foo
     password: bar
-    remote_path: list_of_files
+    list_of_remote_paths: list_of_files
     host_key_algorithms:
       - 'ssh-dss'
       - 'ssh-rsa'
@@ -113,7 +114,7 @@ EXAMPLES = r"""
     host: 1.2.3.4
     username: foo
     private_key: '/path/to/private_key'
-    remote_path: list_of_files
+    list_of_remote_paths: list_of_files
 """
 
 RETURN = r"""
@@ -121,7 +122,7 @@ msg:
     description: The result message of the remove operation
     type: str
     returned: always
-    sample: '"Files successfully removed" or "Files <name_of_file> not found"'
+    sample: '"Files <name_of_files> successfully removed" or "Files <name_of_file> not found"'
 """
 
 from io import StringIO
@@ -193,7 +194,7 @@ def main():
         password=dict(type="str", required=False, no_log=True),
         private_key=dict(type="str", required=False, no_log=True),
         private_key_passphrase=dict(type="str", required=False, no_log=True),
-        remote_path=dict(type="str", required=True),
+        list_of_remote_paths=dict(type="list", elements="str", required=True),
         host_key_algorithms=dict(type="list", elements="str", required=False),
     )
 
@@ -275,14 +276,27 @@ def main():
 
         try:
             if sftp:
-                sftp.remove(module.params["remote_path"])
-                result["changed"] = True
-                result["msg"] = f"File {module.params['remote_path']} successfully removed"
+                file_list : list = module.params["list_of_remote_paths"]
+
+                removed = []
+                not_found = []
+                for file in file_list:
+                    try:
+                        sftp.remove(file)
+                        removed.append(file)
+                    except IOError as ie:
+                        if ie.errno == 2:
+                            not_found.append(file)
+                        else:
+                            module.fail_json(msg=f"SFTP remove failed on {file}: {to_native(ie)}")
+
+                result["changed"] = bool(removed)
+                result["msg"] = f"Removed: {removed}. Not found: {not_found}"
             else:
                 raise e
         except IOError as e:
             if e.errno == 2:  # No such file or directory
-                result["msg"] = f"File {module.params['remote_path']} not found"
+                result["msg"] = f"File {module.params['list_of_remote_paths']} not found"
             else:
                 module.fail_json(
                     msg=f"SFTP remove operation failed: {to_native(e)}", **result
@@ -290,8 +304,9 @@ def main():
         finally:
             if sftp:
                 sftp.close()
+            if transport:
+                transport.close()
             ssh.close()
-
     except Exception as err:
         module.fail_json(msg=f"Client error occurred: {to_native(err)}", **result)
 
