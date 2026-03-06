@@ -89,7 +89,7 @@ EXAMPLES = r"""
       - 'ecdsa-sha2-nistp256'
 
 - name: remove file using password protected SSH key
-  dtvillafana.general.sftp_remove:
+  dtvillafana.general.sftp_remove_multi:
     host: 1.2.3.4
     username: foo
     private_key: '/path/to/private_key'
@@ -100,7 +100,7 @@ EXAMPLES = r"""
       - 'ecdsa-sha2-nistp256'
 
 - name: connect to legacy server with ssh-dss
-  dtvillafana.general.sftp_remove:
+  dtvillafana.general.sftp_remove_multi:
     host: 1.2.3.4
     username: foo
     password: bar
@@ -110,7 +110,7 @@ EXAMPLES = r"""
       - 'ssh-rsa'
 
 - name: remove file in a directory using SSH key
-  dtvillafana.general.sftp_remove:
+  dtvillafana.general.sftp_remove_multi:
     host: 1.2.3.4
     username: foo
     private_key: '/path/to/private_key'
