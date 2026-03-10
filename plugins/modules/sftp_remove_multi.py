@@ -277,9 +277,9 @@ def main():
         try:
             if sftp:
                 file_list : list = module.params["list_of_remote_paths"]
-
                 removed = []
                 not_found = []
+
                 for file in file_list:
                     try:
                         sftp.remove(file)
@@ -290,7 +290,7 @@ def main():
                         else:
                             module.fail_json(msg=f"SFTP remove failed on {file}: {to_native(ie)}")
 
-                result["changed"] = bool(removed)
+                result["changed"] = not bool(not_found)
                 result["msg"] = f"Removed: {removed}. Not found: {not_found}"
             else:
                 raise e
