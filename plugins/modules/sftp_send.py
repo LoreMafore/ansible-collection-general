@@ -165,10 +165,12 @@ try:
     from paramiko.transport import Transport
     from paramiko import SSHException
 
+    if "ssh-dss" not in Transport._preferred_keys:
+        Transport._preferred_keys = ("ssh-dss",) + tuple(Transport._preferred_keys)
+
     HAS_PARAMIKO = True
 except ImportError:
     HAS_PARAMIKO = False
-
 
 def get_file_hash(file_obj):
     """Calculate MD5 hash of file object."""
