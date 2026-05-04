@@ -167,6 +167,9 @@ try:
 
     if "ssh-dss" not in Transport._preferred_keys:
         Transport._preferred_keys = ("ssh-dss",) + tuple(Transport._preferred_keys)
+        
+    from paramiko import dsskey
+    Transport._key_info["ssh-dss"] = dsskey.DSSKey
 
     HAS_PARAMIKO = True
 except ImportError:
