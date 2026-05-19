@@ -153,9 +153,10 @@ changed:
     sample: true
 """
 
+import errno
 import os
 import hashlib
-from io import StringIO
+from io import BytesIO, StringIO
 from typing import IO
 from ansible.module_utils._text import to_native, to_text
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
@@ -186,7 +187,6 @@ def get_connect_params(module: AnsibleModule) -> dict[str, any]:
         "port": module.params["port"],
     }
 
-    # Add authentication parameters based on method
     if module.params["private_key"]:
         try:
             privkey_str: str = module.params["private_key"]
@@ -216,10 +216,8 @@ def get_connect_params(module: AnsibleModule) -> dict[str, any]:
 def configure_host_key_algorithms(ssh_client, host_key_algorithms):
     """Configure host key algorithms for the SSH client."""
     if host_key_algorithms:
-        # Get the transport object and configure host key algorithms
         transport = ssh_client.get_transport()
         if transport is not None:
-            # Set the preferred host key algorithms
             transport.get_security_options().key_types = host_key_algorithms
 
 
@@ -258,6 +256,7 @@ def main():
         )
 
     src = module.params["src"]
+    content_type: str = "File"
     if os.path.isfile(src):
         try:
             with open(src, "rb") as f:
@@ -268,8 +267,9 @@ def main():
             )
     else:
         content = to_text(src).encode("utf-8")
+        content_type = "String content"
 
-    sftp = None
+    sftp: None | paramiko.SFTPClient = None
     transport = None
     e: SSHException = SSHException("SSH failed to connect - generic")
     try:
@@ -278,20 +278,14 @@ def main():
 
         connect_params = get_connect_params(module=module)
 
-        # Configure host key algorithms before connecting if specified
         if module.params["host_key_algorithms"]:
             for x in range(10):
                 try:
-                    # Create a fresh transport on each attempt
                     transport = paramiko.Transport(
                         (module.params["host"], module.params["port"])
                     )
-
-                    # Set the host key algorithms on the transport's security options
                     security_options = transport.get_security_options()
                     security_options.key_types = module.params["host_key_algorithms"]
-
-                    # Start the transport
                     transport.start_client()
                     break
                 except Exception as err:
@@ -304,7 +298,6 @@ def main():
             if transport is None or not transport.is_active():
                 raise e
 
-            # Authenticate using the transport
             if "pkey" in connect_params:
                 transport.auth_publickey(
                     connect_params["username"], connect_params["pkey"]
@@ -314,10 +307,8 @@ def main():
                     connect_params["username"], connect_params["password"]
                 )
 
-            # Create SFTP client from the transport
             sftp = paramiko.SFTPClient.from_transport(transport)
         else:
-            # Use standard connection method
             for x in range(10):
                 try:
                     ssh.connect(**connect_params)
@@ -325,34 +316,66 @@ def main():
                 except Exception as err:
                     e = err
                     continue
-            sftp = ssh.open_sftp()
+            sftp: paramiko.SFTPClient = ssh.open_sftp()
 
         if sftp:
             try:
-                # Check if file exists and compare content
+                dest_path = module.params["dest_path"]
+
                 try:
-                    with sftp.file(module.params["dest_path"], "rb") as remote_file:
+                    with sftp.file(dest_path, "rb") as remote_file:
                         remote_hash = get_file_hash(remote_file)
-
                     local_hash = hashlib.md5(content).hexdigest()
-
                     if remote_hash == local_hash:
                         result["msg"] = (
                             "File already exists at destination with the same content."
                         )
                         module.exit_json(**result)
                 except IOError:
-                    # File doesn't exist or read permissions not granted, continue with upload
                     pass
 
-                with sftp.file(module.params["dest_path"], "wb") as f:
-                    f.write(content)
-                result["changed"] = True
-                result["msg"] = (
-                    f"File uploaded successfully to {to_native(module.params['dest_path'])}"
-                )
+                if not dest_path.startswith("/"):
+                    dest_path = sftp.normalize(".").rstrip("/") + "/" + dest_path
+
+                try:
+                    sftp.putfo(BytesIO(content), dest_path)
+                    result["changed"] = True
+                    result["msg"] = (
+                        f"{content_type} uploaded successfully to {to_native(module.params['dest_path'])}"
+                    )
+                except paramiko.sftp.SFTPError as err:
+                    module.fail_json(
+                        msg=f"SFTP upload failed with status {err.args[0] if err.args else 'unknown'}: {to_native(err)}",
+                        dest_path=dest_path,
+                        **result,
+                    )
+                except IOError as err:
+                    err_detail = {
+                        errno.EACCES: "Permission denied",
+                        errno.ENOENT: "No such file or directory",
+                        errno.ENOSPC: "No space left on device",
+                        errno.EROFS: "Read-only filesystem",
+                    }.get(err.errno, f"errno {err.errno}")
+                    module.fail_json(
+                        msg=f"SFTP upload failed: {err_detail} ({to_native(err)})",
+                        dest_path=dest_path,
+                        errno=err.errno,
+                        **result,
+                    )
+                except Exception as err:
+                    module.fail_json(
+                        msg=f"SFTP upload failed: {type(err).__name__}: {to_native(err)}",
+                        dest_path=dest_path,
+                        **result,
+                    )
+
             except Exception as err:
-                module.fail_json(msg=f"SFTP upload failed: {to_native(err)}", **result)
+                module.fail_json(
+                    msg=f"SFTP upload failed: {to_native(err)}",
+                    paramiko_version=paramiko.__version__,
+                    dest_path=dest_path,
+                    **result,
+                )
             finally:
                 if sftp:
                     sftp.close()
